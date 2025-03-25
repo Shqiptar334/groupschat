@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Groepschat</title>
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.4.7/dist/peerjs.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; background-color: #f1f1f1; margin: 0; }
+    .container { background: #fff; padding: 20px; border-radius: 10px; width: 80%; max-width: 500px; box-shadow: 0 0 20px rgba(0, 0, 0, 0.2); }
+    .header { text-align: center; margin-bottom: 20px; }
+    input, button { width: 100%; padding: 10px; margin: 10px 0; font-size: 1em; border-radius: 8px; }
+    button { background-color: #4caf50; color: white; border: none; cursor: pointer; }
+    button:hover { background-color: #45a049; }
+    #chatlog { height: 300px; overflow-y: scroll; margin-bottom: 20px; padding: 10px; background: #f9f9f9; border-radius: 10px; }
+    .message { margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+    .message-text { text-align: left; margin-right: 10px; }
+    .options { cursor: pointer; font-size: 1.2em; }
+    .options:hover { color: #4caf50; }
+    .delete-option { display: none; color: red; cursor: pointer; }
+    .delete-option:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header">
+    <h2>Groepschat</h2>
+    <p>Verbind met meerdere mensen door hun Peer-ID's in te voeren en kies je naam!</p>
+  </div>
+
+  <div>
+    <h3>Voer je Naam in:</h3>
+    <input type="text" id="userName" placeholder="Jouw naam">
+    <button onclick="setUserName()">Stel je Naam in</button>
+    <p id="nameDisplay" style="font-weight: bold; color: #4caf50;"></p>
+  </div>
+
+  <div>
+    <h3>Jouw Peer-ID:</h3>
+    <input type="text" id="myPeerId" readonly>
+    <button onclick="generatePeerId()">Genereer Peer-ID</button>
+  </div>
+
+  <div>
+    <h3>Verbinden met Vrienden (Voer Peer-ID's in)</h3>
+    <input type="text" id="friendPeerId" placeholder="Voer Peer-ID in en voeg een vriend toe">
+    <button onclick="connectToFriend()">Voeg vriend toe</button>
+  </div>
+
+  <div id="chatlog">Chatlog...</div>
+
+  <div>
+    <input type="text" id="messageInput" placeholder="Typ hier je bericht...">
+    <button onclick="sendMessage()">Verzend Bericht</button>
+  </div>
+
+  <div>
+    <input type="file" id="fileInput">
+    <button onclick="sendFile()">Verzend Bestand</button>
+  </div>
+</div>
+
+<script>
+  let peer;
+  let connections = [];
+  let myPeerId;
+  let userName;
+  const userColors = ['blue', 'red', 'green', 'orange', 'purple', 'brown'];
+  let userColor = userColors[Math.floor(Math.random() * userColors.length)];
+
+  function setUserName() {
+    userName = document.getElementById('userName').value.trim();
+    if (userName) {
+      document.getElementById('nameDisplay').innerText = 'Naam ingesteld: ' + userName;
+    }
+  }
+
+  // Genereer altijd een 2-cijferige Peer-ID
+  function generatePeerId() {
+    const randomId = Math.floor(Math.random() * 90) + 10; // Genereert een getal tussen 10 en 99
+    peer = new Peer(randomId.toString()); // Peer krijgt 2-cijferige ID
+
+    peer.on('open', (id) => {
+      myPeerId = id;
+      document.getElementById('myPeerId').value = myPeerId; // Toon Peer-ID in de input
+    });
+
+    peer.on('connection', (conn) => {
+      connections.push(conn);
+      logMessage(userName + ' is verbonden met: ' + conn.peer);
+      conn.on('data', (data) => handleIncomingData(data));
+    });
+
+    peer.on('error', (err) => console.error(err));
+  }
+
+  function connectToFriend() {
+    const friendPeerId = document.getElementById('friendPeerId').value.trim();
+    if (!friendPeerId) {
+      alert('Voer een geldige Peer-ID in!');
+      return;
+    }
+
+    const conn = peer.connect(friendPeerId);
+    conn.on('open', () => {
+      connections.push(conn);
+      logMessage(userName + ' verbonden met: ' + friendPeerId);
+    });
+
+    conn.on('data', (data) => handleIncomingData(data));
+    conn.on('error', (err) => console.error(err));
+  }
+
+  function handleIncomingData(data) {
+    if (data.type === 'message') {
+      logMessage(data.senderName + ': ' + data.message, data.messageId, data.senderColor);
+    } else if (data.type === 'file') {
+      handleFile(data.senderName, data.fileName, data.fileData);
+    } else if (data.type === 'delete') {
+      deleteMessageFromOthers(data.messageId);
+    }
+  }
+
+  function sendMessage() {
+    const message = document.getElementById('messageInput').value.trim();
+    if (!message) return alert('Typ een bericht voordat je het verstuurt!');
+    if (connections.length === 0) return alert('Je moet eerst verbinding maken met vrienden!');
+
+    const messageId = new Date().getTime();
+    const data = { type: 'message', senderName: userName, message: message, messageId: messageId, senderColor: userColor };
+
+    connections.forEach(conn => conn.send(data));
+    logMessage(userName + ': ' + message, messageId, userColor);
+    document.getElementById('messageInput').value = '';
+  }
+
+  function sendFile() {
+    const fileInput = document.getElementById('fileInput');
+    const file = fileInput.files[0];
+    if (!file) return alert('Kies eerst een bestand!');
+
+    const reader = new FileReader();
+    reader.onload = function(event) {
+      const data = { type: 'file', senderName: userName, fileName: file.name, fileData: event.target.result };
+      connections.forEach(conn => conn.send(data));
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function deleteMessage(messageId) {
+    const messageElement = document.getElementById(messageId);
+    if (messageElement) messageElement.remove();
+    connections.forEach(conn => conn.send({ type: 'delete', messageId }));
+  }
+
+  function deleteMessageFromOthers(messageId) {
+    const messageElement = document.getElementById(messageId);
+    if (messageElement) messageElement.remove();
+  }
+
+  function logMessage(messageText, messageId = 'msg' + new Date().getTime(), color = 'black') {
+    const chatlog = document.getElementById('chatlog');
+    const messageElement = document.createElement('div');
+    messageElement.classList.add('message');
+    messageElement.id = messageId;
+
+    const textElement = document.createElement('span');
+    textElement.classList.add('message-text');
+    textElement.innerText = messageText;
+    textElement.style.color = color;
+
+    const options = document.createElement('span');
+    options.classList.add('options');
+    options.innerText = '⋮';
+    options.onclick = function() {
+      deleteOption.style.display = deleteOption.style.display === 'none' ? 'inline' : 'none';
+    };
+
+    const deleteOption = document.createElement('span');
+    deleteOption.classList.add('delete-option');
+    deleteOption.innerText = 'Verwijderen';
+    deleteOption.onclick = function() {
+      deleteMessage(messageId);
+    };
+
+    messageElement.appendChild(textElement);
+    messageElement.appendChild(options);
+    messageElement.appendChild(deleteOption);
+    chatlog.appendChild(messageElement);
+    chatlog.scrollTop = chatlog.scrollHeight;
+  }
+
+  function handleFile(senderName, fileName, fileData) {
+    const chatlog = document.getElementById('chatlog');
+    const fileElement = document.createElement('div');
+    fileElement.classList.add('message');
+
+    const fileText = document.createElement('span');
+    fileText.classList.add('message-text');
+    fileText.innerText = `${senderName} heeft een bestand gestuurd: `;
+
+    const downloadLink = document.createElement('a');
+    downloadLink.href = fileData;
+    downloadLink.download = fileName;
+    downloadLink.innerText = fileName;
+
+    fileElement.appendChild(fileText);
+    fileElement.appendChild(downloadLink);
+    chatlog.appendChild(fileElement);
+    chatlog.scrollTop = chatlog.scrollHeight;
+  }
+</script>
+
+</body>
+</html>
